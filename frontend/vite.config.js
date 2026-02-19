@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [react()],
-  optimizeDeps: {
-    include: ['cytoscape', 'cytoscape-cose-bilkent', 'd3', 'papaparse']
-  }
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
 })
