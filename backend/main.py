@@ -101,4 +101,7 @@ async def chat_with_data(query: str = Body(..., embed=True), context: dict = Bod
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Use the PORT environment variable if it exists (Render setting)
+    # Default to 10000 for local testing if needed
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
