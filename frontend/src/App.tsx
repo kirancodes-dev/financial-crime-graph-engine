@@ -56,7 +56,8 @@ export function App() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/analyze", { method: "POST", body: formData });
+      // UPDATED: Now connects to your live Render Cloud Engine
+      const response = await fetch("https://financial-crime-graph-engine.onrender.com/api/analyze", { method: "POST", body: formData });
       const data = await response.json();
       if (!response.ok || data.error) { 
         alert(`🚨 ENGINE ERROR: ${data.error}`); 
@@ -70,7 +71,7 @@ export function App() {
       });
       setResults(data);
     } catch (error) {
-      alert("🚨 FATAL: Backend connection failed. Check if port 8000 is active.");
+      alert("🚨 FATAL: Backend connection failed. Check if your Render service is live.");
     } finally {
       setLoading(false);
     }
@@ -155,7 +156,8 @@ export function App() {
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatInput("");
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/chat", {
+      // UPDATED: AI Chat now also connects to your live Render Cloud Engine
+      const response = await fetch("https://financial-crime-graph-engine.onrender.com/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: userMsg, context: results })
       });
       const data = await response.json();

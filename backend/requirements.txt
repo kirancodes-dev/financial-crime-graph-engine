@@ -4,7 +4,10 @@ pandas>=2.2.0
 networkx>=3.2.1
 numpy>=1.26.4
 python-multipart>=0.0.9
+python-dotenv
+sqlalchemy
+google-generativeai
+
+# Keep these ONLY if you are actually using MongoDB now:
 pymongo[srv]
 certifi
-python-dotenv
-google-genai
