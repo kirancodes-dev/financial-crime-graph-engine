@@ -1,110 +1,136 @@
-import pandas as pd
-from fastapi import FastAPI, UploadFile, File, Body
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import io
 import os
-import traceback
-from pymongo import MongoClient
+import uvicorn
+import pandas as pd
+import networkx as nx
+import google.generativeai as genai
 import certifi
-from google import genai
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# Internal Forensic Engine
-from engine import FraudEngine
 
 load_dotenv()
 
-# --- CLOUD PERSISTENCE (With Safety Bypass) ---
-MONGO_URL = os.getenv("MONGO_URL")
-client_db = None
-accounts_col = None
-
-if MONGO_URL:
-    try:
-        client_db = MongoClient(MONGO_URL, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=5000)
-        db = client_db["ForensicsDB"]
-        accounts_col = db["flagged_accounts"]
-        client_db.admin.command('ping')
-        print("✅ Judicial Cloud Database Online")
-    except Exception as e:
-        print(f"⚠️ Cloud DB Bypass: {e}")
-else:
-    print("ℹ️ MONGO_URL not found. Running in local-only mode.")
-
-# --- MODERN AI CLIENT (With Safety Bypass) ---
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
-
 app = FastAPI()
 
+# --- CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.post("/api/analyze")
-async def analyze_file(file: UploadFile = File(...)):
+# Initialize Gemini AI
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-pro')
+
+# Initialize MongoDB
+MONGO_URI = os.getenv("MONGO_URI")
+db_status = "Disconnected"
+if MONGO_URI:
     try:
-        contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
-        
-        fraud_engine = FraudEngine(df)
-        results = fraud_engine.run_analysis()
-        
-        # PERSISTENCE (Only if MongoDB is connected)
-        if accounts_col is not None and results.get("suspicious_accounts"):
-            try:
-                for acc in results["suspicious_accounts"]:
-                    accounts_col.update_one(
-                        {"account_id": acc["account_id"]},
-                        {"$set": {
-                            "account_id": acc["account_id"],
-                            "suspicion_score": acc["suspicion_score"],
-                            "detected_patterns": acc["detected_patterns"],
-                            "ring_id": acc["ring_id"],
-                            "last_audit": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-                        }},
+        client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+        db = client["fraud_detection_db"]
+        collection = db["flagged_networks"]
+        db_status = "Connected"
+        print("✅ Connected to MongoDB!")
+    except Exception as e:
+        print(f"⚠️ MongoDB Connection Failed: {e}")
+
+# --- API ENDPOINTS ---
+@app.get("/")
+def home():
+    return {"message": "Financial Crime Graph Engine is Online", "db_status": db_status}
+
+@app.post("/api/analyze")
+async def analyze_csv(file: UploadFile = File(...)):
+    try:
+        df = pd.read_csv(file.file)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid CSV file")
+
+    G = nx.from_pandas_edgelist(df, 'sender_id', 'receiver_id', ['amount', 'timestamp'], create_using=nx.DiGraph())
+    
+    fraud_rings = []
+    try:
+        cycles = list(nx.simple_cycles(G))
+        for cycle in cycles:
+            if len(cycle) > 2 and len(cycle) < 7: 
+                subgraph = G.subgraph(cycle)
+                volume = sum([d['amount'] for u, v, d in subgraph.edges(data=True)])
+                
+                ring_data = {
+                    "ring_id": f"RING_{len(fraud_rings)+1:03d}",
+                    "pattern_type": "Circular Layering",
+                    "member_count": len(cycle),
+                    "score": min(95 + len(cycle), 100),
+                    "nodes": cycle,
+                    "total_volume": float(volume)
+                }
+                fraud_rings.append(ring_data)
+                
+                # SAVE TO MONGODB
+                if MONGO_URI:
+                    collection.update_one(
+                        {"ring_id": ring_data["ring_id"]}, 
+                        {"$set": ring_data}, 
                         upsert=True
                     )
-            except Exception as db_err:
-                print(f"DB Write Error: {db_err}")
-                
-        return results
     except Exception as e:
-        print(traceback.format_exc())
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        print(f"Graph processing error: {e}")
 
-@app.get("/api/archive")
-async def get_archive():
-    try:
-        if accounts_col is None: return []
-        cursor = accounts_col.find({}, {"_id": 0}).sort("suspicion_score", -1).limit(100)
-        return list(cursor)
-    except:
-        return []
+    elements = []
+    for node in G.nodes():
+        risk = 10
+        is_suspicious = any(node in r['nodes'] for r in fraud_rings)
+        if is_suspicious: risk = 90
+        
+        elements.append({
+            "data": {
+                "id": str(node), "label": str(node), "risk_score": risk,
+                "is_suspicious": is_suspicious, "recommend_freeze": is_suspicious and risk > 85
+            }
+        })
+    for u, v, data in G.edges(data=True):
+        elements.append({
+            "data": {
+                "source": str(u), "target": str(v),
+                "amount": str(data.get('amount', 0)), "timestamp": str(data.get('timestamp', ''))
+            }
+        })
+
+    return {
+        "analytics": {
+            "total_transactions": len(df),
+            "flagged_entities": sum(1 for x in elements if x['data'].get('is_suspicious')),
+        },
+        "graph_data": elements[:1500],
+        "fraud_rings": fraud_rings
+    }
 
 @app.post("/api/chat")
-async def chat_with_data(query: str = Body(..., embed=True), context: dict = Body(...)):
-    if not ai_client:
-        return {"response": "AI Assistant is currently offline (API Key Missing)."}
-    try:
-        analytics = context.get('analytics', {})
-        response = ai_client.models.generate_content(
-            model="gemini-2.0-flash", 
-            contents=f"Investigator Query: {query}. Data Context: {analytics}"
-        )
-        return {"response": response.text.strip()}
-    except:
-        return {"response": "AI Error."}
+async def chat_agent(request: dict = Body(...)):
+    user_query = request.get("query")
+    context_data = request.get("context")
 
-# --- RENDER PORT HANDLING ---
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    # Render provides the PORT environment variable automatically
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    if not GEMINI_API_KEY:
+        return {"response": "AI is disabled (No API Key configured)."}
+
+    prompt = f"""
+    You are a forensic financial investigator. 
+    Here is the data from the latest fraud scan: {str(context_data)[:2000]}...
+    
+    User Question: {user_query}
+    
+    Provide a professional, concise answer explaining the suspicious activity.
+    """
+    try:
+        response = model.generate_content(prompt)
+        return {"response": response.text}
+    except Exception as e:
+        return {"response": f"AI Error: {str(e)}"}
