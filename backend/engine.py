@@ -18,6 +18,12 @@ class FraudConfig:
     LAYER_POINTS = 15
     FREEZE_THRESHOLD_SCORE = 40
     MAX_NODES_TO_RENDER = 800
+    # Velocity detection
+    VELOCITY_WINDOW_HOURS = 1
+    VELOCITY_MIN_TXN = 8          # transactions in window to flag
+    VELOCITY_POINTS = 25
+    # Round-trip detection
+    ROUND_TRIP_POINTS = 18
 
 class FraudEngine:
     def __init__(self, df: pd.DataFrame):
@@ -127,10 +133,64 @@ class FraudEngine:
         except Exception:
             pass
 
+    def detect_velocity_burst(self):
+        """Flag accounts sending an unusually high number of txns in a short rolling window."""
+        df = self.df.copy()
+        df['ts_epoch'] = df['timestamp'].astype(np.int64) // 10**9  # seconds
+        window_sec = FraudConfig.VELOCITY_WINDOW_HOURS * 3600
+        sender_groups = df.groupby('sender_id')
+        for sender, group in sender_groups:
+            times = sorted(group['ts_epoch'].tolist())
+            # Sliding window count
+            for i, t_start in enumerate(times):
+                count = sum(1 for t in times[i:] if t - t_start <= window_sec)
+                if count >= FraudConfig.VELOCITY_MIN_TXN:
+                    self.assign_points([sender], FraudConfig.VELOCITY_POINTS, 'VELOCITY_BURST')
+                    self.fraud_rings.append({
+                        "ring_id": f"VEL_{str(sender)[-4:]}",
+                        "pattern_type": f"Velocity Burst ({count} txns/{FraudConfig.VELOCITY_WINDOW_HOURS}h)",
+                        "member_count": 1,
+                        "nodes": [sender],
+                        "score": FraudConfig.VELOCITY_POINTS
+                    })
+                    break  # one flag per sender is enough
+
+    def detect_round_trips(self):
+        """Detect A→B and B→A flows with matching amounts (±5%): classic layering."""
+        # Build a map: (sender, receiver) -> list of amounts
+        fwd: dict = {}
+        for _, row in self.df.iterrows():
+            key = (str(row['sender_id']), str(row['receiver_id']))
+            fwd.setdefault(key, []).append(float(row['amount']))
+        
+        seen: set = set()
+        for (a, b), amts_fwd in fwd.items():
+            if (b, a) in fwd and (a, b) not in seen and (b, a) not in seen:
+                amts_rev = fwd[(b, a)]
+                # Check if any forward amount matches any reverse amount within 5%
+                for af in amts_fwd:
+                    for ar in amts_rev:
+                        if af > 0 and abs(af - ar) / af <= 0.05:
+                            seen.add((a, b))
+                            self.assign_points([a, b], FraudConfig.ROUND_TRIP_POINTS, 'ROUND_TRIP')
+                            self.fraud_rings.append({
+                                "ring_id": f"RT_{a[-4:]}_{b[-4:]}",
+                                "pattern_type": "Round-Trip Layering",
+                                "member_count": 2,
+                                "nodes": [a, b],
+                                "score": FraudConfig.ROUND_TRIP_POINTS * 2
+                            })
+                            break
+                    else:
+                        continue
+                    break
+
     def run_analysis(self):
         self.detect_geo_risk()
         self.detect_smurfing()
         self.detect_cycles()
+        self.detect_velocity_burst()
+        self.detect_round_trips()
         self.fraud_rings.sort(key=lambda x: x['score'], reverse=True)
         return self.generate_ui_payload()
 
@@ -202,12 +262,78 @@ class FraudEngine:
                     "timestamp": str(data.get('timestamp', '')), "is_fraudulent": (u in self.suspicious_nodes and v in self.suspicious_nodes)
                 }
             })
-                
+
+        # ── Network-level statistics ──────────────────────────────────────────
+        all_scores = list(self.points.values())
+        avg_risk = float(np.mean(all_scores)) if all_scores else 0.0
+        try:
+            density = float(nx.density(subgraph))
+        except Exception:
+            density = 0.0
+        try:
+            ug = subgraph.to_undirected()
+            cc = float(nx.average_clustering(ug)) if len(ug) > 1 else 0.0
+        except Exception:
+            cc = 0.0
+
+        # ── Daily timeline (for sparkline chart) ─────────────────────────────
+        self.df['date_str'] = self.df['timestamp'].dt.strftime('%Y-%m-%d')
+        daily = self.df.groupby('date_str').agg(
+            volume=('amount', 'sum'),
+            count=('amount', 'count')
+        ).reset_index()
+        # Mark days with flagged activity
+        flagged_ids = self.suspicious_nodes
+        flagged_mask = self.df['sender_id'].isin(flagged_ids) | self.df['receiver_id'].isin(flagged_ids)
+        flagged_daily = self.df[flagged_mask].groupby('date_str').size().reset_index(name='flagged')
+        daily = daily.merge(flagged_daily, on='date_str', how='left').fillna(0)
+        timeline = [
+            {"date": row['date_str'], "volume": round(row['volume'], 2), "count": int(row['count']), "flagged": int(row['flagged'])}
+            for _, row in daily.iterrows()
+        ]
+
+        # ── Fraud type breakdown ──────────────────────────────────────────────
+        fraud_type_counts: dict[str, int] = {}
+        for node in self.suspicious_nodes:
+            for label in self.node_labels.get(node, []):
+                fraud_type_counts[label] = fraud_type_counts.get(label, 0) + 1
+
+        # ── Flagged entities list (for CSV export) ────────────────────────────
+        flagged_entities = []
+        for node in nodes_to_render:
+            if node in self.suspicious_nodes or node in accounts_to_freeze:
+                flagged_entities.append({
+                    "account_id": str(node),
+                    "risk_score": self.points.get(node, 0),
+                    "country": self.node_countries.get(node, 'IN'),
+                    "fraud_types": "|".join(self.node_labels.get(node, [])),
+                    "total_sent": round(totals[node]['sent'], 2),
+                    "total_received": round(totals[node]['received'], 2),
+                    "recommend_freeze": node in accounts_to_freeze
+                })
+        flagged_entities.sort(key=lambda x: x['risk_score'], reverse=True)
+
+        accounts_to_freeze_list = [
+            {"account_id": str(n), "risk_score": self.points.get(n, 0),
+             "country": self.node_countries.get(n, 'IN'),
+             "fraud_types": "|".join(self.node_labels.get(n, []))}
+            for n in accounts_to_freeze
+        ]
+
         return {
             "analytics": {
-                "total_transactions": len(self.df), "flagged_entities": len(self.suspicious_nodes),
-                "freeze_recommendations": len(accounts_to_freeze), "max_risk_score": max(self.points.values()) if self.points else 0
+                "total_transactions": len(self.df),
+                "flagged_entities": len(self.suspicious_nodes),
+                "freeze_recommendations": len(accounts_to_freeze),
+                "max_risk_score": max(self.points.values()) if self.points else 0,
+                "avg_risk_score": round(avg_risk, 1),
+                "network_density": round(density, 4),
+                "clustering_coefficient": round(cc, 4),
+                "fraud_pattern_count": len(self.fraud_rings),
             },
             "graph_data": graph_data,
-            "fraud_rings": self.fraud_rings[:25]
+            "fraud_rings": self.fraud_rings[:25],
+            "timeline": timeline,
+            "fraud_type_breakdown": fraud_type_counts,
+            "flagged_entities": flagged_entities,
         }
