@@ -95,7 +95,7 @@ def _run_engine(csv_bytes: bytes) -> dict[str, Any]:
 
 
 # ── Routes ───────────────────────────────────────────────────────────────
-@app.get("/")
+@app.get("/api/status")
 def home():
     return {
         "message": "Financial Crime Graph Engine v2 — Local Mode",
