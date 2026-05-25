@@ -14,6 +14,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -239,6 +240,11 @@ def clear_cache():
     """Dev utility — wipe the server-side result cache."""
     _result_cache.clear()
     return {"message": "Cache cleared"}
+
+
+# ── Mount Frontend Static Files ─────────────────────────────────────────
+# Serve the compiled React app at the root URL
+app.mount("/", StaticFiles(directory="../frontend/dist", html=True), name="frontend")
 
 
 if __name__ == "__main__":
