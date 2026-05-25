@@ -819,6 +819,11 @@ def add_code_slide_block(slide, left, top, width, height, title, code_text):
         p2.font.color.rgb = RGBColor(241, 245, 249) # off white
 
 def create_ppt_presentation(filename, logo_path):
+    from generate_beautiful_presentation import create_beautiful_presentation
+    create_beautiful_presentation(filename, logo_path)
+    return
+
+def create_ppt_presentation_old(filename, logo_path):
     prs = Presentation()
     
     # 16:9 Widescreen sizes
@@ -1364,12 +1369,16 @@ def generate_ui_payload(self):
     print(f"PPTX successfully generated at {filename}")
 
 if __name__ == "__main__":
-    logo = download_logo()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(script_dir, "snps_logo.png")
+    logo = download_logo(logo_path)
     if logo:
         print("Using university logo for documentation headers.")
     else:
         print("Warning: Logo could not be downloaded. Proceeding with text placeholders.")
         
-    create_pdf_report("backend/Fraud_Analysis_Project_Report.pdf", logo)
-    create_ppt_presentation("backend/Fraud_Analysis_Presentation.pptx", logo)
+    pdf_path = os.path.join(script_dir, "Fraud_Analysis_Project_Report.pdf")
+    pptx_path = os.path.join(script_dir, "Fraud_Analysis_Presentation.pptx")
+    create_pdf_report(pdf_path, logo)
+    create_ppt_presentation(pptx_path, logo)
     print("All documents generated successfully.")
