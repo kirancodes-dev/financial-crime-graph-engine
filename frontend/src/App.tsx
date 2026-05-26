@@ -193,29 +193,300 @@ export function App() {
   // --- PDF EXPORT ---
   const generatePDF = async () => {
     try {
-      showToast("ℹ️ Rendering forensic report PDF...");
-      const element = document.getElementById("dashboard-content");
-      if (!element) {
-        showToast("❌ Dashboard element not found.");
+      if (!results) {
+        showToast("❌ No scan results available to export.");
         return;
       }
+      showToast("ℹ️ Generating text-based PDF report...");
+
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
       
-      const canvas = await html2canvas(element, { 
-        scale: 1.5, 
-        backgroundColor: '#020617',
-        useCORS: true,
-        allowTaint: true,
-        logging: false
+      let y = 20;
+
+      // Helper to draw headers & footers
+      const drawHeaderFooter = (pageNum: number, totalPages: number) => {
+        // Draw Navy top header bar
+        pdf.setFillColor(15, 23, 42);
+        pdf.rect(0, 0, pageWidth, 12, "F");
+        
+        pdf.setFont("Helvetica", "bold");
+        pdf.setFontSize(8);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text("RIFT FORENSICS — COMPLIANCE REPORT EXPORT", 15, 8);
+        pdf.text(new Date().toLocaleDateString(), pageWidth - 15, 8, { align: "right" });
+        
+        // Draw footer line
+        pdf.setDrawColor(200, 200, 200);
+        pdf.setLineWidth(0.3);
+        pdf.line(15, pageHeight - 15, pageWidth - 15, pageHeight - 15);
+        
+        pdf.setFont("Helvetica", "italic");
+        pdf.setFontSize(8);
+        pdf.setTextColor(100, 100, 100);
+        pdf.text("Sanjay Ghodawat University - CSE", 15, pageHeight - 10);
+        pdf.text(`Page ${pageNum} of ${totalPages}`, pageWidth - 15, pageHeight - 10, { align: "right" });
+      };
+
+      // ─── PAGE 1: COVER PAGE & EXECUTIVE SUMMARY ───
+      // Top Dark Banner
+      pdf.setFillColor(15, 23, 42);
+      pdf.rect(15, y, pageWidth - 30, 25, "F");
+      
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(16);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("RIFT FORENSIC INVESTIGATION REPORT", 20, y + 10);
+      
+      pdf.setFont("Helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.setTextColor(245, 158, 11); // Gold Accent
+      pdf.text("Heuristic & Topological Network Scan Results", 20, y + 18);
+      
+      y += 35;
+      
+      // Meta box
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.rect(15, y, pageWidth - 30, 28, "FD");
+      
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("SCAN METADATA:", 20, y + 7);
+      
+      pdf.setFont("Helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.setFontSize(8.5);
+      pdf.text(`Report Timestamp: ${new Date().toLocaleString()}`, 20, y + 13);
+      pdf.text(`Forensic Database Mode: Local Mode (SQLite Persistent Session)`, 20, y + 18);
+      pdf.text(`Total Transaction Entities: ${results.flagged_entities?.length || 0} suspicious accounts identified`, 20, y + 23);
+      
+      y += 36;
+      
+      // Core Analytics
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("EXECUTIVE KEY METRICS SUMMARY", 15, y);
+      y += 5;
+      
+      const stats = [
+        { label: "Total Ledger Volume", value: results.analytics?.total_transactions ? `$${results.analytics.total_transactions.toLocaleString()}` : "N/A" },
+        { label: "Flagged Suspicious Accounts", value: (results.analytics?.flagged_entities || 0).toString() },
+        { label: "Recommended Account Freezes", value: (results.analytics?.freeze_recommendations || 0).toString() },
+        { label: "Maximum Risk Rating Assigned", value: `${results.analytics?.max_risk_score || 0} PTS` },
+        { label: "Average Risk Rating Assigned", value: `${results.analytics?.avg_risk_score || 0} PTS` },
+        { label: "Calculated Network Density", value: (results.analytics?.network_density || 0).toFixed(4) },
+        { label: "Clustering Coefficient Index", value: (results.analytics?.clustering_coefficient || 0).toFixed(4) }
+      ];
+      
+      stats.forEach(stat => {
+        pdf.setDrawColor(241, 245, 249);
+        pdf.line(15, y, pageWidth - 15, y);
+        pdf.setFont("Helvetica", "normal");
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text(stat.label, 18, y + 5);
+        pdf.setFont("Helvetica", "bold");
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(stat.value, pageWidth - 20, y + 5, { align: "right" });
+        y += 8;
       });
-      const imgData = canvas.toDataURL("image/png");
       
-      const pdf = new jsPDF("l", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      y += 5;
       
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      // Fraud Types Breakdown
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("IDENTIFIED FRAUD PATTERNS BREAKDOWN", 15, y);
+      y += 6;
+      
+      const breakdown = results.fraud_type_breakdown || {};
+      if (Object.keys(breakdown).length === 0) {
+        pdf.setFont("Helvetica", "italic");
+        pdf.setFontSize(9);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("No specific fraud patterns flagged in this ledger.", 18, y + 5);
+      } else {
+        Object.entries(breakdown).forEach(([type, count]) => {
+          pdf.setFillColor(248, 250, 252);
+          pdf.rect(15, y, pageWidth - 30, 7.5, "F");
+          pdf.setFont("Helvetica", "bold");
+          pdf.setFontSize(8.5);
+          pdf.setTextColor(71, 85, 105);
+          pdf.text(type, 18, y + 5);
+          pdf.setTextColor(239, 68, 68); // Red-500
+          pdf.text(`${count} accounts`, pageWidth - 20, y + 5, { align: "right" });
+          y += 9;
+        });
+      }
+
+      drawHeaderFooter(1, 4);
+
+      // ─── PAGE 2: RISK LEADERBOARD ───
+      pdf.addPage();
+      y = 20;
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(13);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("RISK LEADERBOARD (SUSPICIOUS ACCOUNTS AUDIT TRAIL)", 15, y);
+      y += 8;
+      
+      // Draw Table Header
+      pdf.setFillColor(15, 23, 42);
+      pdf.rect(15, y, pageWidth - 30, 8, "F");
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("ACCOUNT ID", 18, y + 5.5);
+      pdf.text("SCORE", 55, y + 5.5);
+      pdf.text("COUNTRY", 72, y + 5.5);
+      pdf.text("FRAUD PATTERNS", 92, y + 5.5);
+      pdf.text("TOTAL SENT", 145, y + 5.5, { align: "right" });
+      pdf.text("TOTAL RCVD", 170, y + 5.5, { align: "right" });
+      pdf.text("RECOMMEND ACTION", 178, y + 5.5);
+      y += 9;
+      
+      const entities = results.flagged_entities || [];
+      pdf.setFont("Helvetica", "normal");
+      pdf.setFontSize(8);
+      
+      entities.slice(0, 24).forEach((entity, index) => {
+        if (index % 2 === 1) {
+          pdf.setFillColor(248, 250, 252);
+          pdf.rect(15, y, pageWidth - 30, 7.5, "F");
+        }
+        
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(entity.account_id.toString(), 18, y + 5);
+        
+        if (entity.risk_score >= 50) {
+          pdf.setTextColor(239, 68, 68); // Red
+        } else {
+          pdf.setTextColor(245, 158, 11); // Orange
+        }
+        pdf.text(`${entity.risk_score} PTS`, 55, y + 5);
+        
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(entity.country || "IN", 72, y + 5);
+        
+        // Truncate fraud types if too long
+        let fraudTxt = entity.fraud_types || "SUSPICIOUS";
+        if (fraudTxt.length > 25) fraudTxt = fraudTxt.substring(0, 22) + "...";
+        pdf.text(fraudTxt, 92, y + 5);
+        
+        pdf.text(`$${entity.total_sent.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`, 145, y + 5, { align: "right" });
+        pdf.text(`$${entity.total_received.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`, 170, y + 5, { align: "right" });
+        
+        if (entity.recommend_freeze) {
+          pdf.setTextColor(220, 38, 38);
+          pdf.setFont("Helvetica", "bold");
+          pdf.text("🛑 FREEZE ACCOUNT", 178, y + 5);
+        } else {
+          pdf.setTextColor(100, 116, 139);
+          pdf.setFont("Helvetica", "normal");
+          pdf.text("⚠️ MONITOR/AUDIT", 178, y + 5);
+        }
+        
+        pdf.setFont("Helvetica", "normal");
+        y += 8;
+      });
+      
+      drawHeaderFooter(2, 4);
+
+      // ─── PAGE 3: DETECTED COLLUSIVE NETWORK RINGS ───
+      pdf.addPage();
+      y = 20;
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(13);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("IDENTIFIED FRAUD RINGS & HIGH-RISK SUBGRAPHS", 15, y);
+      y += 8;
+      
+      const rings = results.fraud_rings || [];
+      if (rings.length === 0) {
+        pdf.setFont("Helvetica", "italic");
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("No multi-hop loops or cyclic wash patterns detected in the dataset.", 15, y + 5);
+      } else {
+        rings.slice(0, 7).forEach((ring) => {
+          pdf.setDrawColor(226, 232, 240);
+          pdf.setFillColor(248, 250, 252);
+          pdf.rect(15, y, pageWidth - 30, 24, "FD");
+          
+          pdf.setFont("Helvetica", "bold");
+          pdf.setFontSize(9.5);
+          pdf.setTextColor(15, 23, 42);
+          pdf.text(`Ring ID: ${ring.ring_id}  —  Pattern Typology: ${ring.pattern_type}`, 20, y + 6);
+          
+          pdf.setFont("Helvetica", "normal");
+          pdf.setFontSize(8.5);
+          pdf.setTextColor(100, 116, 139);
+          pdf.text(`Cluster Nodes Count: ${ring.member_count} nodes`, 20, y + 11);
+          pdf.text(`Heuristic Risk Multiplier Score: ${ring.score} Points`, 20, y + 16);
+          
+          // Print participants
+          const participantsText = `Cycle Path: ${ring.nodes.join(" ➔ ")}`;
+          const splitText = pdf.splitTextToSize(participantsText, pageWidth - 45);
+          pdf.setTextColor(51, 65, 85);
+          pdf.text(splitText, 20, y + 21);
+          
+          y += 29;
+        });
+      }
+      
+      drawHeaderFooter(3, 4);
+
+      // ─── PAGE 4: FORENSIC NARRATIVE REPORT (AI SUMMARY) ───
+      pdf.addPage();
+      y = 20;
+      pdf.setFont("Helvetica", "bold");
+      pdf.setFontSize(13);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("FORENSIC AI SUSPICIOUS ACTIVITY SUMMARY & CHAT HISTORY", 15, y);
+      y += 8;
+      
+      pdf.setFont("Helvetica", "normal");
+      pdf.setFontSize(9);
+      
+      messages.forEach((msg) => {
+        if (y > pageHeight - 35) {
+          drawHeaderFooter(4, 4);
+          return; // limit rendering to fit on page 4
+        }
+        
+        pdf.setDrawColor(226, 232, 240);
+        if (msg.role === 'bot') {
+          pdf.setFillColor(240, 245, 250);
+        } else {
+          pdf.setFillColor(255, 255, 255);
+        }
+        
+        const sender = msg.role === 'bot' ? "FORENSIC AI AGENT:" : "COMPLIANCE SPECIALIST:";
+        const txt = `${sender}\n${msg.text}`;
+        
+        const splitMsg = pdf.splitTextToSize(txt, pageWidth - 40);
+        const boxHeight = (splitMsg.length * 4.5) + 8;
+        
+        pdf.rect(15, y, pageWidth - 30, boxHeight, "FD");
+        if (msg.role === 'bot') {
+          pdf.setTextColor(15, 23, 42);
+        } else {
+          pdf.setTextColor(71, 85, 105);
+        }
+        pdf.text(splitMsg, 20, y + 6);
+        
+        y += boxHeight + 4;
+      });
+      
+      drawHeaderFooter(4, 4);
+
       pdf.save(`RIFT_Forensic_Report_${Date.now()}.pdf`);
-      showToast("✅ Forensic Report PDF downloaded!");
+      showToast("✅ Structured Forensic PDF downloaded!");
     } catch (err: any) {
       console.error("PDF Export Error:", err);
       showToast(`❌ PDF Export failed: ${err.message || err}`);
