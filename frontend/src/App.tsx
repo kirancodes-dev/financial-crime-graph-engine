@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { 
   ShieldAlert, Activity, AlertTriangle, X, Database, ShieldBan, 
   Users, Download, Maximize, Sun, Moon, Send, Radio, MapPin, 
