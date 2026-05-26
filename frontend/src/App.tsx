@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import CytoscapeComponent from 'react-cytoscapejs';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
   ShieldAlert, Activity, AlertTriangle, X, Database, ShieldBan, 
@@ -10,7 +10,7 @@ import {
   Search, Filter, FileText, Zap, Keyboard, BarChart2
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL || (typeof window !== "undefined" && window.location.port === "5173" ? "http://localhost:8000" : "");
 
 // --- INTERFACES ---
 interface AnalysisResults {
@@ -192,18 +192,34 @@ export function App() {
 
   // --- PDF EXPORT ---
   const generatePDF = async () => {
-    const element = document.getElementById("dashboard-content");
-    if (!element) return;
-    
-    const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#020617' });
-    const imgData = canvas.toDataURL("image/png");
-    
-    const pdf = new jsPDF("l", "mm", "a4");
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    
-    pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`RIFT_Forensic_Report_${Date.now()}.pdf`);
+    try {
+      showToast("ℹ️ Rendering forensic report PDF...");
+      const element = document.getElementById("dashboard-content");
+      if (!element) {
+        showToast("❌ Dashboard element not found.");
+        return;
+      }
+      
+      const canvas = await html2canvas(element, { 
+        scale: 1.5, 
+        backgroundColor: '#020617',
+        useCORS: true,
+        allowTaint: true,
+        logging: false
+      });
+      const imgData = canvas.toDataURL("image/png");
+      
+      const pdf = new jsPDF("l", "mm", "a4");
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`RIFT_Forensic_Report_${Date.now()}.pdf`);
+      showToast("✅ Forensic Report PDF downloaded!");
+    } catch (err: any) {
+      console.error("PDF Export Error:", err);
+      showToast(`❌ PDF Export failed: ${err.message || err}`);
+    }
   };
 
   // --- CYTOSCAPE STYLING ---
